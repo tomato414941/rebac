@@ -4,5 +4,16 @@
   "description": "Relationship-based authorization in your own process: the OpenFGA model language, checked against relations you keep.",
   "type": "module",
   "license": "MIT",
-  "private": true
+  "private": true,
+  "main": "src/index.mjs",
+  "exports": "./src/index.mjs",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "src"
+  ]
 }
