@@ -60,18 +60,25 @@ test('矢印は関係の先の対象の権限をたどり、親の親まで届�
   assert.equal(await authz.check(doc('a'), 'read', user('bob')), false);
 });
 
-test('循環する関係でも止まり、深さの上限で誤りを返す', async () => {
+test('循環する関係でも止まり、深さの上限で誤りを返す', () => {
   const authz = rebac(SCHEMA, rows('group:a#member@group:b#member', 'group:b#member@group:a#member', 'document:a#viewer@group:a#member'));
-  await assert.rejects(authz.check(doc('a'), 'read', user('anne')), /depth/);
+  assert.throws(() => authz.check(doc('a'), 'read', user('anne')), /depth/);
 });
 
-test('知らない型や名前を聞かれたら誤りを返す', async () => {
+test('知らない型や名前を聞かれたら誤りを返す', () => {
   const authz = rebac(SCHEMA, rows());
-  await assert.rejects(authz.check({ type: 'nothing', id: 'x' }, 'read', user('anne')), /unknown type/);
-  await assert.rejects(authz.check(doc('a'), 'fly', user('anne')), /has no fly/);
+  assert.throws(() => authz.check({ type: 'nothing', id: 'x' }, 'read', user('anne')), /unknown type/);
+  assert.throws(() => authz.check(doc('a'), 'fly', user('anne')), /has no fly/);
 });
 
 test('関係を読む側は非同期でもよい', async () => {
   const authz = rebac(SCHEMA, async (object, relation) => object.id === 'a' && relation === 'owner' ? [user('anne')] : []);
   assert.equal(await authz.check(doc('a'), 'read', user('anne')), true);
+});
+
+test('権限の式はほかの権限を名前で参照でき、同期の読み手には同期で答える', () => {
+  const schema = 'definition user {} definition d { relation owner: user permission manage = owner permission remove = manage }';
+  const authz = rebac(schema, (object, relation) => relation === 'owner' ? [user('anne')] : []);
+  assert.equal(authz.check(doc('x').type === 'document' ? { type: 'd', id: 'x' } : null, 'remove', user('anne')), true);
+  assert.equal(authz.check({ type: 'd', id: 'x' }, 'remove', user('bob')), false);
 });
