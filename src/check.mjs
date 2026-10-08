@@ -6,36 +6,26 @@
 // An object or subject is { type, id }; a set subject is { type, id, relation } (every subject with that relation
 // on that object). Evaluation is membership: whether S is in the set the expression denotes. Walks are bounded
 // in depth so a cycle in the data cannot run forever.
-const DEPTH = 32;
-const isPromise = value => value && typeof value.then === 'function';
-// Runs the generator-based walk: each yielded value is either rows (or a promise of rows) to await, and the
-// generator's return is the answer. Stays synchronous as long as nothing yielded is a promise.
-function drive(generator) {
-  let step = generator.next();
-  while (!step.done) {
-    const value = step.value;
-    if (isPromise(value)) return value.then(async resolved => {
-      let next = generator.next(resolved);
-      while (!next.done) next = generator.next(await next.value);
-      return next.value;
-    });
-    step = generator.next(value);
-  }
-  return step.value;
+import { drive } from './drive.mjs';
+
+export const DEPTH = 32;
+
+// The computed or recorded set named `name` on objects of `type`.
+export function expressionOf(schema, type, name) {
+  const definition = schema.definitions.get(type);
+  if (!definition) throw new Error(`unknown type ${type}`);
+  if (definition.relations.has(name)) return { op: 'this', relation: name };
+  const permission = definition.permissions.get(name);
+  if (!permission) throw new Error(`${type} has no ${name}`);
+  return permission.expression;
 }
 
 export class Checker {
   constructor(schema, read, { depth = DEPTH } = {}) {
     this.schema = schema; this.read = read; this.depth = depth;
   }
-  // The computed or recorded set named `name` on `object`.
   expressionOf(object, name) {
-    const definition = this.schema.definitions.get(object.type);
-    if (!definition) throw new Error(`unknown type ${object.type}`);
-    if (definition.relations.has(name)) return { op: 'this', relation: name };
-    const permission = definition.permissions.get(name);
-    if (!permission) throw new Error(`${object.type} has no ${name}`);
-    return permission.expression;
+    return expressionOf(this.schema, object.type, name);
   }
   check(object, name, subject) {
     return drive(this.member(object, this.expressionOf(object, name), subject, this.depth));

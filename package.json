@@ -1,12 +1,17 @@
 {
   "name": "rebac",
   "version": "0.0.0",
-  "description": "Relationship-based authorization in your own process: the OpenFGA model language, checked against relations you keep.",
+  "description": "Relationship-based authorization in your own process: the SpiceDB schema language, checked and looked up against relations you keep.",
   "type": "module",
   "license": "MIT",
   "private": true,
   "main": "src/index.mjs",
-  "exports": "./src/index.mjs",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.mjs"
+    }
+  },
   "scripts": {
     "test": "node --test test/*.test.mjs"
   },
@@ -15,5 +20,6 @@
   },
   "files": [
     "src"
-  ]
+  ],
+  "types": "src/index.d.ts"
 }
