@@ -4,8 +4,8 @@
 // may return the rows or a promise of them; check() then answers in kind, a value or a promise.
 //
 // An object or subject is { type, id }; a set subject is { type, id, relation } (every subject with that relation
-// on that object). Evaluation is membership: whether S is in the set the expression denotes. Walks are bounded
-// in depth so a cycle in the data cannot run forever.
+// on that object). Evaluation is membership: whether S is in the set the expression denotes. A walk that comes
+// back to a set it is still inside stops there, and walks are bounded in depth.
 import { drive } from './drive.mjs';
 
 export const DEPTH = 32;
@@ -28,28 +28,46 @@ export class Checker {
     return expressionOf(this.schema, object.type, name);
   }
   check(object, name, subject) {
-    return drive(this.member(object, this.expressionOf(object, name), subject, this.depth));
+    this.expressionOf(object, name);
+    return drive(this.named(object, name, subject, this.depth, { open: new Map(), subtracting: [] }));
   }
-  * member(object, node, subject, depth) {
+  // The set named `name` on `object`. Coming back to a set the walk is still inside adds no subject the walk cannot
+  // reach another way, so that branch reaches none. Coming back through the side an exclusion subtracts would let a
+  // set decide its own exclusion, which has no answer.
+  * named(object, name, subject, depth, path) {
     if (depth <= 0) throw new Error('relationship depth exceeded');
+    const key = object.type + ':' + object.id + '#' + name, at = path.open.get(key);
+    if (at !== undefined) {
+      if (path.subtracting.some(start => at < start)) throw new Error(`relationship cycle through an exclusion at ${key}`);
+      return false;
+    }
+    path.open.set(key, path.open.size);
+    try {
+      if (this.schema.definitions.get(object.type).relations.has(name)) return yield* this.inRelation(object, name, subject, depth, path);
+      return yield* this.member(object, this.expressionOf(object, name), subject, depth, path);
+    } finally {
+      path.open.delete(key);
+    }
+  }
+  * member(object, node, subject, depth, path) {
     switch (node.op) {
       case 'nil': return false;
-      case 'union': { for (const part of node.of) if (yield* this.member(object, part, subject, depth)) return true; return false; }
-      case 'intersection': { for (const part of node.of) if (!(yield* this.member(object, part, subject, depth))) return false; return true; }
-      case 'exclusion': return (yield* this.member(object, node.of[0], subject, depth)) && !(yield* this.member(object, node.of[1], subject, depth));
-      case 'this': {
-        // A bare name is a relation of this type, or a permission of it (named in another permission's expression).
-        const definition = this.schema.definitions.get(object.type);
-        if (definition?.permissions.has(node.relation) && !definition.relations.has(node.relation)) return yield* this.member(object, definition.permissions.get(node.relation).expression, subject, depth);
-        return yield* this.inRelation(object, node.relation, subject, depth);
+      case 'union': { for (const part of node.of) if (yield* this.member(object, part, subject, depth, path)) return true; return false; }
+      case 'intersection': { for (const part of node.of) if (!(yield* this.member(object, part, subject, depth, path))) return false; return true; }
+      case 'exclusion': {
+        if (!(yield* this.member(object, node.of[0], subject, depth, path))) return false;
+        path.subtracting.push(path.open.size);
+        try { return !(yield* this.member(object, node.of[1], subject, depth, path)); } finally { path.subtracting.pop(); }
       }
+      // A bare name is a relation of this type, or a permission of it (named in another permission's expression).
+      case 'this': return yield* this.named(object, node.relation, subject, depth, path);
       case 'arrow': {
         // Through each subject recorded for the relation, to that subject's own set of the same name.
         for (const through of yield this.read(object, node.through)) {
           if (through.relation) continue; // a set as the left side of an arrow is not followed (as SpiceDB)
           const target = { type: through.type, id: through.id };
           if (!this.schema.definitions.get(target.type)) continue;
-          if (yield* this.member(target, this.expressionOf(target, node.to), subject, depth - 1)) return true;
+          if (yield* this.named(target, node.to, subject, depth - 1, path)) return true;
         }
         return false;
       }
@@ -57,12 +75,12 @@ export class Checker {
     }
   }
   // Recorded directly, or through a set subject: every subject with that relation on that object.
-  * inRelation(object, relation, subject, depth) {
+  * inRelation(object, relation, subject, depth, path) {
     for (const recorded of yield this.read(object, relation)) {
       if (!recorded.relation) { if (recorded.type === subject.type && recorded.id === subject.id) return true; continue; }
       const set = { type: recorded.type, id: recorded.id };
       if (!this.schema.definitions.get(set.type)) continue;
-      if (yield* this.member(set, this.expressionOf(set, recorded.relation), subject, depth - 1)) return true;
+      if (yield* this.named(set, recorded.relation, subject, depth - 1, path)) return true;
     }
     return false;
   }

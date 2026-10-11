@@ -60,9 +60,27 @@ test('矢印は関係の先の対象の権限をたどり、親の親まで届�
   assert.equal(await authz.check(doc('a'), 'read', user('bob')), false);
 });
 
-test('循環する関係でも止まり、深さの上限で誤りを返す', () => {
+test('循環する入れ子でも、届く経路があれば記録の並び順によらず権限があると答える', () => {
+  const authz = rebac(SCHEMA, rows('group:a#member@group:b#member', 'group:a#member@user:anne', 'group:b#member@group:a#member', 'document:a#viewer@group:b#member'));
+  assert.equal(authz.check({ type: 'group', id: 'a' }, 'member', user('anne')), true, 'a direct member recorded after the cycle');
+  assert.equal(authz.check({ type: 'group', id: 'b' }, 'member', user('anne')), true);
+  assert.equal(authz.check(doc('a'), 'read', user('anne')), true);
+});
+
+test('循環する入れ子で届かない主体には、権限がないと答える', () => {
   const authz = rebac(SCHEMA, rows('group:a#member@group:b#member', 'group:b#member@group:a#member', 'document:a#viewer@group:a#member'));
-  assert.throws(() => authz.check(doc('a'), 'read', user('anne')), /depth/);
+  assert.equal(authz.check(doc('a'), 'read', user('anne')), false);
+});
+
+test('深さの上限を超える入れ子では誤りを返す', () => {
+  const authz = rebac(SCHEMA, rows('group:g0#member@group:g1#member', 'group:g1#member@group:g2#member', 'group:g2#member@group:g3#member', 'group:g3#member@user:anne'), { depth: 3 });
+  assert.throws(() => authz.check({ type: 'group', id: 'g0' }, 'member', user('anne')), /depth/);
+});
+
+test('差で引かれる側を通って同じ集合に戻る循環には、答えずに誤りを返す', () => {
+  const schema = 'definition user {} definition d { relation viewer: user relation blocker: d#view permission view = viewer - blocker }';
+  const authz = rebac(schema, rows('d:x#viewer@user:anne', 'd:x#blocker@d:x#view'));
+  assert.throws(() => authz.check({ type: 'd', id: 'x' }, 'view', user('anne')), /exclusion/);
 });
 
 test('知らない型や名前を聞かれたら誤りを返す', () => {
