@@ -80,6 +80,16 @@ test('循環する関係でも、見つかるものがなくなった時点で�
   assert.deepEqual(names(authz.lookupSubjects(doc('x'), 'read')), ['user:anne']);
 });
 
+test('スキーマで許していない主体の記録は無視して、判定と検索で同じ答えを返す', () => {
+  // owner may only be a user, a viewer set only group#member, a parent only a folder, a member never a folder.
+  const authz = lookup('group:eng#member@user:anne', 'group:eng#member@folder:f', 'document:a#owner@group:eng#member',
+    'document:b#viewer@group:eng#admin', 'document:c#parent@group:eng');
+  for (const id of ['a', 'b', 'c']) assert.equal(authz.check(doc(id), 'read', user('anne')), false, id);
+  assert.deepEqual(authz.lookupResources('document', 'read', user('anne')), []);
+  for (const id of ['a', 'b', 'c']) assert.deepEqual(authz.lookupSubjects(doc(id), 'read'), [], id);
+  assert.deepEqual(names(authz.lookupSubjects({ type: 'group', id: 'eng' }, 'member')), ['user:anne']);
+});
+
 test('読む側が同期なら同期で、非同期なら非同期で答える', async () => {
   const { read, reverse } = store('document:a#owner@user:anne');
   const now = rebac(SCHEMA, read, { reverse });

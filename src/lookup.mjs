@@ -10,7 +10,7 @@
 // the others until nothing changes, at most `depth` times. Readers may answer with rows or a promise of them; a
 // lookup then answers in kind. The same read asked twice in one lookup is asked once.
 import { drive, then } from './drive.mjs';
-import { DEPTH, expressionOf } from './check.mjs';
+import { DEPTH, allowed, expressionOf } from './check.mjs';
 
 const keyOf = ref => ref.type + ':' + ref.id + (ref.relation ? '#' + ref.relation : '');
 const keep = (a, b) => new Map([...a].filter(([key]) => b.has(key)));
@@ -138,15 +138,15 @@ export class Lookup {
       }
       case 'this': {
         if (!this.schema.definitions.get(object.type).relations.has(node.relation)) return new Map(ref({ object, name: node.relation }));
-        for (const row of yield read(object, node.relation)) {
+        for (const row of allowed(this.schema, object.type, node.relation, yield read(object, node.relation))) {
           if (!row.relation) { found.set(keyOf(row), { type: row.type, id: row.id }); continue; }
-          if (this.schema.definitions.has(row.type)) merge(found, ref({ object: { type: row.type, id: row.id }, name: row.relation }));
+          merge(found, ref({ object: { type: row.type, id: row.id }, name: row.relation }));
         }
         return found;
       }
       case 'arrow': {
-        for (const row of yield read(object, node.through)) {
-          if (row.relation || !this.schema.definitions.has(row.type)) continue;
+        for (const row of allowed(this.schema, object.type, node.through, yield read(object, node.through))) {
+          if (row.relation) continue;
           merge(found, ref({ object: { type: row.type, id: row.id }, name: node.to }));
         }
         return found;
