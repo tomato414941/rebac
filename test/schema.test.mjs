@@ -53,3 +53,13 @@ test('存在しない型・関係・権限への参照は、読んだ時点で�
   ];
   for (const [text, message] of cases) assert.throws(() => parseSchema(text), error => error instanceof SchemaError && message.test(error.message), text);
 });
+
+test('関係も矢印も通らずに自分へ戻る権限は、読んだ時点で誤りとして返す', () => {
+  const cases = [
+    'definition u {} definition d { relation r: u permission view = edit + r permission edit = view }',
+    'definition d { permission p = p }',
+    'definition u {} definition d { relation r: u permission p = (q & r) - r permission q = p }',
+  ];
+  for (const text of cases) assert.throws(() => parseSchema(text), error => error instanceof SchemaError && /refers back to itself/.test(error.message), text);
+  assert.doesNotThrow(() => parseSchema('definition u {} definition d { relation r: u relation parent: d permission view = r + parent->view }'), 'through an arrow');
+});

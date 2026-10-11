@@ -1,6 +1,7 @@
 // The SpiceDB schema language, read into definitions: what types there are, which relations each records (and
 // what may be the subject of each), and which permissions each computes from them. Only what is written is
-// accepted; a reference to a type or relation that does not exist is an error when the schema is read, not later.
+// accepted; a reference to a type or relation that does not exist is an error when the schema is read, not later,
+// and so is a permission that comes back to itself through permissions alone.
 //
 //   definition document {
 //     relation owner: user | group#member
@@ -139,6 +140,18 @@ function check(definitions) {
       for (const part of node.of) walk(part, line, name);
     };
     for (const [name, { expression, line }] of permissions) walk(expression, line, name);
+    // A permission may not come back to itself through permissions of its type alone: with no relation or arrow on
+    // the way, no record is ever read to end the walk.
+    const uses = node => node.op === 'this' ? (permissions.has(node.relation) ? [node.relation] : []) : (node.of ?? []).flatMap(uses);
+    const settled = new Set();
+    const follow = (name, trail) => {
+      if (settled.has(name)) return;
+      const at = trail.indexOf(name);
+      if (at >= 0) throw new SchemaError(`permission ${type}#${name} refers back to itself: ${[...trail.slice(at), name].join(' -> ')}`, { line: permissions.get(name).line });
+      for (const next of uses(permissions.get(name).expression)) follow(next, [...trail, name]);
+      settled.add(name);
+    };
+    for (const name of permissions.keys()) follow(name, []);
   }
 }
 
