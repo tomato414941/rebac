@@ -2,7 +2,8 @@
 // expressions over relationships the caller keeps. The caller provides `read(object, relation)`, returning the
 // subjects recorded for that relation on that object: each { type, id } or { type, id, relation } for a set. It
 // may return the rows or a promise of them; check() then answers in kind, a value or a promise. A row whose
-// subject the schema does not allow for that relation counts for nothing.
+// subject the schema does not allow for that relation counts for nothing. The same read asked twice in one check
+// is asked once.
 //
 // An object or subject is { type, id }; a set subject is { type, id, relation } (every subject with that relation
 // on that object). Evaluation is membership: whether S is in the set the expression denotes. A walk that comes
@@ -28,6 +29,16 @@ export function allowedRows(schema, type, relation, rows) {
   return [...rows].filter(row => subjects.some(subject => subject.type === row.type && subject.relation === (row.relation ?? null)));
 }
 
+// A reader that asks each distinct question once and answers repeats from what it was told.
+export function once(read, keyOfCall) {
+  const answers = new Map();
+  return (...args) => {
+    const key = keyOfCall(...args);
+    if (!answers.has(key)) answers.set(key, read(...args));
+    return answers.get(key);
+  };
+}
+
 export class Checker {
   constructor(schema, read, { depth = DEPTH } = {}) {
     this.schema = schema; this.read = read; this.depth = depth;
@@ -35,45 +46,48 @@ export class Checker {
   expressionOf(object, name) {
     return expressionOf(this.schema, object.type, name);
   }
+  // One walk: its reads, the sets it is inside (each with its place on the path), and where it entered the sides
+  // that exclusions subtract.
   check(object, name, subject) {
     this.expressionOf(object, name);
-    return drive(this.named(object, name, subject, this.depth, { open: new Map(), subtracting: [] }));
+    const read = once((...args) => this.read(...args), (target, relation) => target.type + ':' + target.id + '#' + relation);
+    return drive(this.named(object, name, subject, this.depth, { read, open: new Map(), subtracting: [] }));
   }
   // The set named `name` on `object`. Coming back to a set the walk is still inside adds no subject the walk cannot
   // reach another way, so that branch reaches none. Coming back through the side an exclusion subtracts would let a
   // set decide its own exclusion, which has no answer.
-  * named(object, name, subject, depth, path) {
+  * named(object, name, subject, depth, walk) {
     if (depth <= 0) throw new Error('relationship depth exceeded');
-    const key = object.type + ':' + object.id + '#' + name, at = path.open.get(key);
+    const key = object.type + ':' + object.id + '#' + name, at = walk.open.get(key);
     if (at !== undefined) {
-      if (path.subtracting.some(start => at < start)) throw new Error(`relationship cycle through an exclusion at ${key}`);
+      if (walk.subtracting.some(start => at < start)) throw new Error(`relationship cycle through an exclusion at ${key}`);
       return false;
     }
-    path.open.set(key, path.open.size);
+    walk.open.set(key, walk.open.size);
     try {
-      if (this.schema.definitions.get(object.type).relations.has(name)) return yield* this.inRelation(object, name, subject, depth, path);
-      return yield* this.member(object, this.expressionOf(object, name), subject, depth, path);
+      if (this.schema.definitions.get(object.type).relations.has(name)) return yield* this.inRelation(object, name, subject, depth, walk);
+      return yield* this.member(object, this.expressionOf(object, name), subject, depth, walk);
     } finally {
-      path.open.delete(key);
+      walk.open.delete(key);
     }
   }
-  * member(object, node, subject, depth, path) {
+  * member(object, node, subject, depth, walk) {
     switch (node.op) {
       case 'nil': return false;
-      case 'union': { for (const part of node.of) if (yield* this.member(object, part, subject, depth, path)) return true; return false; }
-      case 'intersection': { for (const part of node.of) if (!(yield* this.member(object, part, subject, depth, path))) return false; return true; }
+      case 'union': { for (const part of node.of) if (yield* this.member(object, part, subject, depth, walk)) return true; return false; }
+      case 'intersection': { for (const part of node.of) if (!(yield* this.member(object, part, subject, depth, walk))) return false; return true; }
       case 'exclusion': {
-        if (!(yield* this.member(object, node.of[0], subject, depth, path))) return false;
-        path.subtracting.push(path.open.size);
-        try { return !(yield* this.member(object, node.of[1], subject, depth, path)); } finally { path.subtracting.pop(); }
+        if (!(yield* this.member(object, node.of[0], subject, depth, walk))) return false;
+        walk.subtracting.push(walk.open.size);
+        try { return !(yield* this.member(object, node.of[1], subject, depth, walk)); } finally { walk.subtracting.pop(); }
       }
       // A bare name is a relation of this type, or a permission of it (named in another permission's expression).
-      case 'this': return yield* this.named(object, node.relation, subject, depth, path);
+      case 'this': return yield* this.named(object, node.relation, subject, depth, walk);
       case 'arrow': {
         // Through each subject recorded for the relation, to that subject's own set of the same name. A set subject
         // leads to its object, its relation ignored, as SpiceDB does.
-        for (const through of allowedRows(this.schema, object.type, node.through, yield this.read(object, node.through))) {
-          if (yield* this.named({ type: through.type, id: through.id }, node.to, subject, depth - 1, path)) return true;
+        for (const through of allowedRows(this.schema, object.type, node.through, yield walk.read(object, node.through))) {
+          if (yield* this.named({ type: through.type, id: through.id }, node.to, subject, depth - 1, walk)) return true;
         }
         return false;
       }
@@ -81,10 +95,10 @@ export class Checker {
     }
   }
   // Recorded directly, or through a set subject: every subject with that relation on that object.
-  * inRelation(object, relation, subject, depth, path) {
-    for (const recorded of allowedRows(this.schema, object.type, relation, yield this.read(object, relation))) {
+  * inRelation(object, relation, subject, depth, walk) {
+    for (const recorded of allowedRows(this.schema, object.type, relation, yield walk.read(object, relation))) {
       if (!recorded.relation) { if (recorded.type === subject.type && recorded.id === subject.id) return true; continue; }
-      if (yield* this.named({ type: recorded.type, id: recorded.id }, recorded.relation, subject, depth - 1, path)) return true;
+      if (yield* this.named({ type: recorded.type, id: recorded.id }, recorded.relation, subject, depth - 1, walk)) return true;
     }
     return false;
   }

@@ -83,6 +83,16 @@ test('差で引かれる側を通って同じ集合に戻る循環には、答�
   assert.throws(() => authz.check({ type: 'd', id: 'x' }, 'view', user('anne')), /exclusion/);
 });
 
+test('同じ読み取りは一度の判定の中で一回だけ頼む', () => {
+  // Two groups both hold the same group: a walk reaches group:d twice.
+  const read = rows('group:a#member@group:b#member', 'group:a#member@group:c#member', 'group:b#member@group:d#member',
+    'group:c#member@group:d#member', 'group:d#member@user:anne');
+  const asked = [];
+  const authz = rebac(SCHEMA, (object, relation) => { asked.push(object.type + ':' + object.id + '#' + relation); return read(object, relation); });
+  assert.equal(authz.check({ type: 'group', id: 'a' }, 'member', user('bob')), false);
+  assert.equal(new Set(asked).size, asked.length);
+});
+
 test('知らない型や名前を聞かれたら誤りを返す', () => {
   const authz = rebac(SCHEMA, rows());
   assert.throws(() => authz.check({ type: 'nothing', id: 'x' }, 'read', user('anne')), /unknown type/);

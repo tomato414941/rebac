@@ -10,22 +10,13 @@
 // the others until nothing changes, at most `depth` times. Readers may answer with rows or a promise of them; a
 // lookup then answers in kind. The same read asked twice in one lookup is asked once.
 import { drive, then } from './drive.mjs';
-import { DEPTH, allowedRows, expressionOf } from './check.mjs';
+import { DEPTH, allowedRows, expressionOf, once } from './check.mjs';
 
 const keyOf = ref => ref.type + ':' + ref.id + (ref.relation ? '#' + ref.relation : '');
 const keep = (a, b) => new Map([...a].filter(([key]) => b.has(key)));
 const without = (a, b) => new Map([...a].filter(([key]) => !b.has(key)));
 const same = (a, b) => a.size === b.size && [...a.keys()].every(key => b.has(key));
 const merge = (into, from) => { for (const [key, value] of from) into.set(key, value); return into; };
-
-function once(read, keyOfCall) {
-  const answers = new Map();
-  return (...args) => {
-    const key = keyOfCall(...args);
-    if (!answers.has(key)) answers.set(key, read(...args));
-    return answers.get(key);
-  };
-}
 
 // The set a problem names, where sets depend on each other and on themselves. Every set starts empty; each round
 // computes every known set again until it holds still, and the rounds end when one changes nothing.
