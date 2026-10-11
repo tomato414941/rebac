@@ -10,7 +10,7 @@
 // the others until nothing changes, at most `depth` times. Readers may answer with rows or a promise of them; a
 // lookup then answers in kind. The same read asked twice in one lookup is asked once.
 import { drive, then } from './drive.mjs';
-import { DEPTH, allowed, expressionOf } from './check.mjs';
+import { DEPTH, allowedRows, expressionOf } from './check.mjs';
 
 const keyOf = ref => ref.type + ':' + ref.id + (ref.relation ? '#' + ref.relation : '');
 const keep = (a, b) => new Map([...a].filter(([key]) => b.has(key)));
@@ -109,11 +109,12 @@ export class Lookup {
         return found;
       }
       case 'arrow': {
-        // Through the subjects recorded for the relation that have the named set themselves (direct ones only, as check()).
+        // Through the subjects recorded for the relation that have the named set themselves; a set subject stands for
+        // its object, as in check().
         for (const allowed of this.schema.definitions.get(type).relations.get(node.through).subjects) {
-          if (allowed.relation) continue;
           const through = ref({ type: allowed.type, name: node.to });
-          if (through.size) add(yield reverse(type, node.through, [...through.keys()].map(id => ({ type: allowed.type, id }))));
+          const relation = allowed.relation ? { relation: allowed.relation } : {};
+          if (through.size) add(yield reverse(type, node.through, [...through.keys()].map(id => ({ type: allowed.type, id, ...relation }))));
         }
         return found;
       }
@@ -138,15 +139,14 @@ export class Lookup {
       }
       case 'this': {
         if (!this.schema.definitions.get(object.type).relations.has(node.relation)) return new Map(ref({ object, name: node.relation }));
-        for (const row of allowed(this.schema, object.type, node.relation, yield read(object, node.relation))) {
+        for (const row of allowedRows(this.schema, object.type, node.relation, yield read(object, node.relation))) {
           if (!row.relation) { found.set(keyOf(row), { type: row.type, id: row.id }); continue; }
           merge(found, ref({ object: { type: row.type, id: row.id }, name: row.relation }));
         }
         return found;
       }
       case 'arrow': {
-        for (const row of allowed(this.schema, object.type, node.through, yield read(object, node.through))) {
-          if (row.relation) continue;
+        for (const row of allowedRows(this.schema, object.type, node.through, yield read(object, node.through))) {
           merge(found, ref({ object: { type: row.type, id: row.id }, name: node.to }));
         }
         return found;

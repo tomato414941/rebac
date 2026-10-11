@@ -90,6 +90,20 @@ test('スキーマで許していない主体の記録は無視して、判定�
   assert.deepEqual(names(authz.lookupSubjects({ type: 'group', id: 'eng' }, 'member')), ['user:anne']);
 });
 
+test('矢印の左に集合が記録されていれば、その関係は無視して対象そのものの権限をたどる', () => {
+  const schema = `
+    definition user {}
+    definition group { relation member: user  relation manager: user  permission manage = manager }
+    definition document { relation team: group#member  permission manage = team->manage }
+  `;
+  const { read, reverse } = store('document:a#team@group:eng#member', 'group:eng#manager@user:anne', 'group:eng#member@user:bob');
+  const authz = rebac(schema, read, { reverse });
+  assert.equal(authz.check(doc('a'), 'manage', user('anne')), true);
+  assert.equal(authz.check(doc('a'), 'manage', user('bob')), false, 'a member of the group is not its manager');
+  assert.deepEqual(authz.lookupResources('document', 'manage', user('anne')), ['a']);
+  assert.deepEqual(names(authz.lookupSubjects(doc('a'), 'manage')), ['user:anne']);
+});
+
 test('読む側が同期なら同期で、非同期なら非同期で答える', async () => {
   const { read, reverse } = store('document:a#owner@user:anne');
   const now = rebac(SCHEMA, read, { reverse });

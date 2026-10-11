@@ -23,7 +23,7 @@ export function expressionOf(schema, type, name) {
 
 // The rows read for a relation whose subject the schema allows there: an allowed type, and for a set, an allowed
 // relation of it.
-export function allowed(schema, type, relation, rows) {
+export function allowedRows(schema, type, relation, rows) {
   const subjects = schema.definitions.get(type).relations.get(relation).subjects;
   return [...rows].filter(row => subjects.some(subject => subject.type === row.type && subject.relation === (row.relation ?? null)));
 }
@@ -70,9 +70,9 @@ export class Checker {
       // A bare name is a relation of this type, or a permission of it (named in another permission's expression).
       case 'this': return yield* this.named(object, node.relation, subject, depth, path);
       case 'arrow': {
-        // Through each subject recorded for the relation, to that subject's own set of the same name.
-        for (const through of allowed(this.schema, object.type, node.through, yield this.read(object, node.through))) {
-          if (through.relation) continue; // a set as the left side of an arrow is not followed (as SpiceDB)
+        // Through each subject recorded for the relation, to that subject's own set of the same name. A set subject
+        // leads to its object, its relation ignored, as SpiceDB does.
+        for (const through of allowedRows(this.schema, object.type, node.through, yield this.read(object, node.through))) {
           if (yield* this.named({ type: through.type, id: through.id }, node.to, subject, depth - 1, path)) return true;
         }
         return false;
@@ -82,7 +82,7 @@ export class Checker {
   }
   // Recorded directly, or through a set subject: every subject with that relation on that object.
   * inRelation(object, relation, subject, depth, path) {
-    for (const recorded of allowed(this.schema, object.type, relation, yield this.read(object, relation))) {
+    for (const recorded of allowedRows(this.schema, object.type, relation, yield this.read(object, relation))) {
       if (!recorded.relation) { if (recorded.type === subject.type && recorded.id === subject.id) return true; continue; }
       if (yield* this.named({ type: recorded.type, id: recorded.id }, recorded.relation, subject, depth - 1, path)) return true;
     }
